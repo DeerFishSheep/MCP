@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/free-search-mcp
-EnvironmentFile=/opt/free-search-mcp/.env
-ExecStart=/usr/bin/node /opt/free-search-mcp/http-server.mjs
+WorkingDirectory=/root/free-search-mcp
+EnvironmentFile=/root/free-search-mcp/.env
+ExecStart=/usr/bin/node /root/free-search-mcp/http-server.mjs
 Restart=always
 RestartSec=3
 # token 和引擎 key 都在 .env 里，别让它们出现在 journal 中
@@ -16,8 +16,8 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/free-search-mcp
+# 部署在 /root 下，不能开 ProtectHome
+ReadWritePaths=/root/free-search-mcp
 
 [Install]
 WantedBy=multi-user.target

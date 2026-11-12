@@ -78,15 +78,35 @@ Header: Authorization: Bearer <token>
 
 手机原生 App（ChatGPT / Claude 手机版）不支持填任意远程 MCP，这条走不通。
 
-## 部署
+## 部署（现状：已上线）
 
-1. 拷本目录到服务器，装 Node 20+。
-2. 写 `/opt/free-search-mcp/.env`（`chmod 600`），放 token 和引擎 key。
-3. `cp deploy/free-search-mcp.service /etc/systemd/system/ && systemctl enable --now free-search-mcp`
-4. 前面套 Caddy 自动 HTTPS：
+| 项 | 值 |
+|---|---|
+| 服务器 | `109.66.112.52:40032`（恒创香港 2C4G，Debian 12，Node 24） |
+| 目录 | `/root/free-search-mcp` |
+| 公开地址 | `https://freesearch.259952.xyz/mcp` |
+| 监听 | `127.0.0.1:8787`，前面是已有的 Caddy（80/443） |
+| 服务 | `systemctl status free-search-mcp` |
+| 口令 | `/root/free-search-mcp/.env`（mode 600） |
+
+取口令：
+
+```bash
+ssh -p 40032 root@109.66.112.52 'grep ^FREE_SEARCH_TOKEN= /root/free-search-mcp/.env | cut -d= -f2-'
+```
+
+换一台机器重来时的四步：
+
+1. 拷本目录到 `/root/free-search-mcp`，装 Node 20+。
+2. 写 `/root/free-search-mcp/.env`（`chmod 600`）：`FREE_SEARCH_TOKEN=<openssl rand -hex 24>`、`FREE_SEARCH_HOST=127.0.0.1`、`FREE_SEARCH_PORT=8787`、引擎 key。
+3. `cp deploy/free-search-mcp.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now free-search-mcp`
+4. Caddyfile 加一块：
    ```
-   mcp.example.com { reverse_proxy 127.0.0.1:8787 }
+   freesearch.259952.xyz {
+       reverse_proxy 127.0.0.1:8787
+   }
    ```
+   然后 `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` 再 `systemctl reload caddy`。注意 `caddy validate` 启动时初始化证书存储，要跑十几秒且没有输出，不是卡死。
 
 不带 key、只靠 bing/ddg 抓取的话，机房 IP 很容易被限流，建议至少配一个 `EXA_API_KEY` 或 `TAVILY_API_KEY`。
 

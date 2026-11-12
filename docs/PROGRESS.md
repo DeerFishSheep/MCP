@@ -1,6 +1,16 @@
 # PROGRESS
 
-最后更新：2026-11-12 · 当前状态：HTTP 版已在本机跑通，未部署 · 下一步：等用户指定服务器，按 README「部署」四步上线
+最后更新：2026-11-12 · 当前状态：已部署上线，公网可用 · 下一步：配客户端 / 视情况加引擎 key
+
+## 线上环境
+
+| 项 | 值 |
+|---|---|
+| 服务器 | `109.66.112.52:40032`（恒创香港 2C4G，Debian 12，Node 24.22） |
+| 目录 | `/root/free-search-mcp` |
+| 地址 | `https://freesearch.259952.xyz/mcp` |
+| 监听 | `127.0.0.1:8787`，Caddy 反代（CF 灰云 A 记录） |
+| 服务 | `systemctl status free-search-mcp`，`.env` mode 600 |
 
 ## 目标
 
@@ -25,5 +35,6 @@
 
 ## 待办
 
-- 服务器选定后部署（`deploy/free-search-mcp.service` + Caddy 自动 HTTPS）
-- 配至少一个 key 引擎（exa/tavily），否则机房 IP 抓 bing/ddg 会被限流
+- 用户按需配客户端（Cursor / Cline / Cindy 填 URL + Bearer；Claude Desktop 走 mcp-remote）
+- 视限流情况配 key 引擎（exa / tavily）。目前 exa 无 key 也能返回结果
+- 未做：多副本、CORS、服务端 SSE 推送
