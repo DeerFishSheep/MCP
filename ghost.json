@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 3,
+  "minCindyVersion": "1.0.0",
+  "id": "free-search",
+  "name": "免费联网搜索",
+  "description": "给 Agent 的免费多引擎联网搜索：27 个搜索引擎自动回退，含站内搜索（GitHub / V2EX / B站 / 知乎 / 掘金 / 豆瓣等）、视频搜索与天气，可在设置页调整引擎链路并实测哪个引擎现在能用。",
+  "whenToUse": "需要联网搜索、查最新资料、搜 GitHub 仓库或代码、搜 V2EX/B站/知乎/掘金/豆瓣/Reddit/HN/StackOverflow 站内内容、搜视频、查天气时找我；多引擎自动回退，比单一搜索源更容易拿到结果",
+  "version": "1.0.0",
+  "kind": "chip",
+  "entry": "main.js",
+  "icon": "assets/icon.png",
+  "command": "搜索",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "联网搜索，走多引擎回退链（默认 exa → tavily → keenable → firecrawl → parallel → bing → anysearch → ddg → ddg-lite → searxng），某个引擎挂了自动换下一个。只返回链接和摘要，不返回网页正文——挑中哪条再用 web_fetch 读正文。凡可能在你知识截止之后变化的信息都用它。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索词。用用户的原话或提炼后的关键词，不要自己扩写成一段话。"
+          },
+          "count": {
+            "type": "number",
+            "description": "结果条数，默认 8，最多 20。用户没要求时不要传。"
+          },
+          "engine": {
+            "type": "string",
+            "description": "强制用某一个引擎而不走回退链。只在用户点名某个引擎，或上一次结果明显不对想换个源时传。可选：ddg, ddg-lite, bing, searxng, anysearch, exa, tavily, keenable, firecrawl, parallel, perplexity, serpbase, serply, deepseek-official, deepseek-tools, you, baidu, kimi, aliyun, doubao, tinyfish, jina, zhihu_global, zhihu_site, openai, gemini, claude"
+          },
+          "timeRange": {
+            "type": "string",
+            "description": "只取指定时间内的结果：day / week / month / year。用户问「最近」「最新」「这周」时才传。"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "web_fetch",
+      "description": "下载一个 https 网页并返回它的可读正文（已剥离脚本和标签）。配合 web_search 用：搜到候选后再读具体那条。只接受 https 地址。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "要读取的 https URL。"
+          }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "platform_search",
+      "description": "在单个平台内直接搜索，不需要 API key。适合找开源仓库、论坛帖子、问答、包和中文社区内容。返回标题、链接和摘要。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "description": "平台：github（仓库/代码）、v2ex（中文技术论坛）、bilibili（B站视频）、reddit、hn（Hacker News）、stackoverflow、wikipedia、npm（包）、juejin（掘金）、douban（豆瓣）、qiita（日文技术）。"
+          },
+          "query": {
+            "type": "string",
+            "description": "搜索词。"
+          },
+          "count": {
+            "type": "number",
+            "description": "结果条数，默认 10，最多 30。"
+          }
+        },
+        "required": ["platform", "query"]
+      }
+    },
+    {
+      "name": "video_search",
+      "description": "搜索视频（Bing 视频、DuckDuckGo 视频），返回视频页面地址、标题和摘要。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "视频搜索词。"
+          },
+          "source": {
+            "type": "string",
+            "description": "bing（默认）或 ddg。"
+          },
+          "count": {
+            "type": "number",
+            "description": "结果条数，默认 10，最多 20。"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "weather",
+      "description": "查某地的实时天气和逐日预报（走 Open-Meteo，免 key）。问天气时优先用它，不要用 web_search。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "城市或地名，中英文都行，如「北京」「Shanghai」。"
+          },
+          "days": {
+            "type": "number",
+            "description": "预报天数，1–7，默认 3。"
+          }
+        },
+        "required": ["location"]
+      }
+    },
+    {
+      "name": "free_search_test",
+      "description": "逐个实测搜索引擎，报告哪些现在能用、哪些挂了、各自耗时多少。搜索失败排查、或用户问「哪个引擎还能用」时用它。不要在正常搜索里调用。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "engines": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "要测的引擎列表；不传则测当前链路里全部可运行的引擎。"
+          },
+          "query": {
+            "type": "string",
+            "description": "测试用的查询词，默认 DeepSeek。"
+          }
+        }
+      }
+    }
+  ],
+  "node": {
+    "entry": "node/worker.cjs",
+    "protocol": "json-rpc-stdio",
+    "lifecycle": "on-demand",
+    "idleTimeoutSeconds": 300
+  },
+  "settingsHtml": "settings.html"
+}
