@@ -23,7 +23,7 @@
           },
           "count": {
             "type": "number",
-            "description": "结果条数，默认 8，最多 20。用户没要求时不要传。"
+            "description": "结果条数，默认 20（已是上限），用户没要求时不要传。"
           },
           "engine": {
             "type": "string",
@@ -67,7 +67,7 @@
           },
           "count": {
             "type": "number",
-            "description": "结果条数，默认 10，最多 30。"
+            "description": "结果条数，默认 30（已是上限），用户没要求时不要传。"
           }
         },
         "required": ["platform", "query"]
@@ -89,7 +89,7 @@
           },
           "count": {
             "type": "number",
-            "description": "结果条数，默认 10，最多 20。"
+            "description": "结果条数，默认 20（已是上限），用户没要求时不要传。"
           }
         },
         "required": ["query"]

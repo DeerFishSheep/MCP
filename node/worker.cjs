@@ -57,7 +57,7 @@ const DEFAULTS = {
   provider: "exa",
   disabledEngines: [],
   fallbackOrder: [],
-  maxResults: 8,
+  maxResults: 20,
   safeSearch: "off",
   bingMarket: "zh-CN",
   lang: "zh",
@@ -400,7 +400,7 @@ async function searchChain(query, params, ctx) {
     preferred = disabled.includes(saved) ? runnable[0] || saved : saved;
   }
 
-  const limit = Math.min(Math.max(Number(params.count) || Number(settings.maxResults) || 8, 1), 20);
+  const limit = Math.min(Math.max(Number(params.count) || Number(settings.maxResults) || 20, 1), 20);
   const timeRange = m.parseTimeRange(params.timeRange);
 
   // 显式点名的引擎即使不在可运行链路里也要试一次——用户既然点名了，
@@ -567,7 +567,7 @@ async function toolPlatformSearch(params, ctx) {
   if (!PLATFORMS.includes(platform)) {
     throw new Error(`unknown platform "${platform}"; one of: ${PLATFORMS.join(", ")}`);
   }
-  const count = Math.min(Math.max(Number(params.count) || 10, 1), 30);
+  const count = Math.min(Math.max(Number(params.count) || 30, 1), 30);
   const result = await m.searchPlatform(platform, query, count, ctx.signal, "zh");
   if (!result?.sources?.length) {
     return { content: `「${query}」在 ${platform} 没有结果。`, detail: { platform, query, sources: [] } };
@@ -582,7 +582,7 @@ async function toolVideoSearch(params, ctx) {
   const { m } = ctx;
   const query = String(params.query ?? "").trim();
   if (!query) throw new Error("query is required");
-  const count = Math.min(Math.max(Number(params.count) || 10, 1), 20);
+  const count = Math.min(Math.max(Number(params.count) || 20, 1), 20);
   // 两个实现的签名不一样：Bing 收 options 再收 signal，DDG 直接收 signal。
   // 上游 PI 移植版把它们当同签名调用的，DDG 路径因此一直是坏的
   // （signal 位置拿到的是普通对象，报 signal?.addEventListener is not a function）。
