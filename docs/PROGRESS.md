@@ -1,6 +1,6 @@
 # PROGRESS
 
-最后更新：2026-11-12 · 当前状态：已部署上线，公网可用 · 下一步：配客户端 / 视情况加引擎 key
+最后更新：2026-11-18 · 当前状态：已上线；过期会话不再报错（兜底接管） · 下一步：weather 的 open-meteo 出口连不通，待换源
 
 ## 线上环境
 
@@ -32,6 +32,7 @@
 - 空闲会话 1h 回收
 - `test/http.test.mjs` 8 项：鉴权、会话、tools/list、通知 202、ping、DELETE
 - 实测：HTTP 侧 `weather` / `web_search` 均返回正常结果，与 stdio 版输出一致
+- 2026-11-18 过期/未知 `mcp-session-id` 不再回 404：改用常驻兜底会话执行并回带新 id。dsh-go 0.2.x 收到 404 不会重新 initialize，会永久卡死（现象：空闲 1h 后 tools/call 一直 `-32000 unknown or expired session`，重启引擎才恢复）
 
 ## 待办
 

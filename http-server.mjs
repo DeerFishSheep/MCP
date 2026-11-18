@@ -27,6 +27,7 @@ if (!TOKEN && !ALLOW_ANON) {
 // ── 会话 ────────────────────────────────────────────────────────────────────
 
 const sessions = new Map();
+let fallbackEntry = null; // 常驻兜底会话，不放进 sessions，不参与空闲回收
 
 function newSession() {
   const entry = { id: randomUUID(), lastSeen: Date.now(), waiting: new Map(), session: null };
@@ -159,17 +160,24 @@ async function handlePost(req, res) {
   }
 
   let entry;
+  // 兜底会话：常驻内存、不参与空闲回收。有的客户端（dsh-go 0.2.x）收到
+  // 404 不会重新 initialize，只拿旧 session id 死重试，一卡就是一整天。
+  // 遇到未知 session 时不拒绝，改由这个会话执行，并把新 id 回给客户端。
+  let adopted = false;
   if (msg.method === "initialize") {
     entry = newSession();
     sessions.set(entry.id, entry);
   } else {
-    entry = sessions.get(String(req.headers["mcp-session-id"] ?? ""));
+    const asked = String(req.headers["mcp-session-id"] ?? "");
+    entry = sessions.get(asked);
     if (!entry) {
-      return sendJson(res, 404, {
-        jsonrpc: "2.0",
-        id: msg.id ?? null,
-        error: { code: -32000, message: "unknown or expired session, call initialize first" },
-      });
+      entry = fallbackEntry ?? (fallbackEntry = newSession());
+      adopted = true;
+      log(
+        asked
+          ? `session ${asked} 已过期/未知，改用兜底会话 ${entry.id} 执行（客户端未重新 initialize）`
+          : `请求未带 mcp-session-id，改用兜底会话 ${entry.id} 执行`,
+      );
     }
   }
   entry.lastSeen = Date.now();
@@ -192,7 +200,8 @@ async function handlePost(req, res) {
       res.writeHead(202).end();
       return;
     }
-    const headers = msg.method === "initialize" ? { "mcp-session-id": entry.id } : {};
+    const headers =
+      msg.method === "initialize" || adopted ? { "mcp-session-id": entry.id } : {};
     sendJson(res, 200, answer, headers);
   } finally {
     if (isToolCall) releaseSlot();
