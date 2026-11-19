@@ -56,11 +56,10 @@ node http-server.mjs
 | `FREE_SEARCH_FALLBACK_ORDER` | 内置 | 逗号分隔的引擎顺序 |
 | `FREE_SEARCH_MULTI_ENGINE` | `1` | 配了 key 的引擎并行跑并合并结果；设 `0` 退回「第一个有结果的引擎就返回」 |
 | `FREE_SEARCH_ENGINE_FANOUT` | `3` | 一次最多并行几个引擎（1–6），并行会同时消耗各家额度 |
-| `FREE_SEARCH_MIN_SOURCES` | `6` | 合并后的目标条数；不够就顺着链路补跑最多两个引擎 |
 | `FREE_SEARCH_KEY_COOLDOWN_MS` | `600000` | 单把 key 额度/鉴权失败后的冷却时间（只冷却这一把，不连坐同引擎的其它 key） |
 | `EXA_API_KEY` 等 | 无 | 各引擎 key，见 `node/worker.cjs` 的 `ENV` 表。**多把 key 用逗号、分号或换行分隔**，见下节 |
 
-也可以放一个 `settings.json` 在本目录（`provider` / `maxResults` / `lang` / `timeoutMs` / `fallbackOrder` / `multiEngine` / `engineFanout` / `minSources`），环境变量覆盖它。
+也可以放一个 `settings.json` 在本目录（`provider` / `maxResults` / `lang` / `timeoutMs` / `fallbackOrder` / `multiEngine` / `engineFanout`），环境变量覆盖它。
 
 ## 多 key 与多引擎并行
 
@@ -75,12 +74,12 @@ TAVILY_API_KEY=tvly-key1,tvly-key2
 `FREE_SEARCH_KEY_COOLDOWN_MS` 控制冷却时长。`keys/list` 只回尾 4 位和数量，不回完整值。
 
 **多引擎并行**默认开启：调用方没点名具体引擎时，配了 key 的引擎会同时跑（最多
-`FREE_SEARCH_ENGINE_FANOUT` 个），结果按 URL 去重、按域名多样性排序后合并；
-合并后不足 `FREE_SEARCH_MIN_SOURCES` 条，再顺着链路补跑最多两个引擎。
+`FREE_SEARCH_ENGINE_FANOUT` 个），结果按 URL 去重、按域名多样性排序后合并。
+不会再为了凑条数额外调用其它引擎；并行那批全失败时才继续顺着回退链兜底。
 
 - 显式传 `engine` 参数时仍是单引擎，行为与以前一致。
 - 想省钱就把 `FREE_SEARCH_MULTI_ENGINE=0` 或把 fanout 调成 2。
-- 并行是「有几个 key 就跑几个」，没配 key 的引擎不会进入并行批次，只做兜底与补跑。
+- 并行是「有几个 key 就跑几个」，没配 key 的引擎不会进入并行批次，只在全失败时兜底。
 
 ## 客户端配置
 

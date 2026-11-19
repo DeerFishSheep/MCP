@@ -79,8 +79,6 @@ const DEFAULTS = {
   multiEngine: true,
   // 一次最多并行几个引擎（天花板，不是必须跑满）。
   engineFanout: 3,
-  // 合并后的目标条数；不够就顺着链路再补跑几个引擎。
-  minSources: 6,
 };
 
 function settingsOf(raw) {
@@ -508,10 +506,9 @@ async function searchChain(query, params, ctx) {
     throw new Error(`所有搜索引擎都失败了：\n${failures.join("\n")}`);
   }
 
-  // ② 默认：配了 key 的引擎并行跑，结果去重合并；不够目标条数再补跑。
+  // ② 默认：配了 key 的引擎并行跑，结果去重合并；不再额外补跑其它引擎。
   const multi = settings.multiEngine !== false;
   const fanout = Math.max(1, Math.min(Number(settings.engineFanout) || DEFAULTS.engineFanout, 6));
-  const minSources = Math.max(1, Number(settings.minSources) || DEFAULTS.minSources);
   const usable = chain.filter((engine) => m.ALL_ENGINES.includes(engine) && !m.isCoolingDown(engine));
   const keyed = usable.filter((engine) => hasKey(ctx.keys, engine));
 
@@ -547,21 +544,6 @@ async function searchChain(query, params, ctx) {
   }
 
   let merged = mm.mergeEngineResults(successful, { limit, appliesFreshness: Boolean(timeRange) });
-
-  // 不够目标条数就补跑，最多再拉两个引擎；达标立刻停，不白烧额度。
-  if (multi && merged.length < minSources) {
-    const tried = new Set(primary);
-    const extras = usable
-      .filter((engine) => !tried.has(engine))
-      .slice(0, 2);
-    for (const engine of extras) {
-      const result = await runEngineWithRetry(engine, query, limit, settings, timeRange, ctx, failures);
-      if (!result?.sources?.length) continue;
-      successful.push({ engine, sources: result.sources });
-      merged = mm.mergeEngineResults(successful, { limit, appliesFreshness: Boolean(timeRange) });
-      if (merged.length >= minSources) break;
-    }
-  }
 
   const enginesUsed = successful.map((item) => item.engine);
   return {

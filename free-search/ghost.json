@@ -13,7 +13,7 @@
   "tools": [
     {
       "name": "web_search",
-      "description": "联网搜索：配了 key 的引擎会并行跑（默认最多 3 个），结果去重合并、按域名多样性排序；结果不够目标条数时顺着回退链补跑（exa → tavily → keenable → firecrawl → parallel → bing → anysearch → ddg → ddg-lite → searxng）。同一个引擎可配多把 key，额度用完自动换下一把。只返回链接和摘要，不返回网页正文——挑中哪条再用 web_fetch 读正文。凡可能在你知识截止之后变化的信息都用它。",
+      "description": "联网搜索：配了 key 的引擎会并行跑（默认最多 3 个），结果去重合并、按域名多样性排序；并行批次全部失败时才顺着回退链兜底（exa → tavily → keenable → firecrawl → parallel → bing → anysearch → ddg → ddg-lite → searxng）。同一个引擎可配多把 key，额度用完自动换下一把。只返回链接和摘要，不返回网页正文——挑中哪条再用 web_fetch 读正文。凡可能在你知识截止之后变化的信息都用它。",
       "parameters": {
         "type": "object",
         "properties": {

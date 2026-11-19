@@ -39,7 +39,7 @@
 - 新增 `node/lib/key_pool.js`：同一引擎多把 key（逗号/分号/换行分隔），按 key 独立冷却与轮转；`keys/list` 只回尾 4 位 + 数量
 - 新增 `node/lib/multi_merge.js`：并行结果按归一化 URL 去重、域名轮转排序，记录 `corroboration`（几个引擎同时给出）
 - `worker.cjs`：`searchChain` 拆成「单引擎显式点名」与「多引擎并行 + 不足补跑」两条；重试时换 key
-- 新环境变量：`FREE_SEARCH_MULTI_ENGINE` / `ENGINE_FANOUT` / `MIN_SOURCES` / `KEY_COOLDOWN_MS`
+- 新环境变量：`FREE_SEARCH_MULTI_ENGINE` / `ENGINE_FANOUT` / `KEY_COOLDOWN_MS`（不做「凑条数补跑」，并行批次全失败才兜底）
 - 单测 `test/key_pool.test.mjs`、`test/multi_merge.test.mjs`（10 项全过）；本地 HTTP 冒烟通过
 - 未部署到线上
 
