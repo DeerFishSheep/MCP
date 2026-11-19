@@ -54,9 +54,12 @@ test("缺 token 返回 401", async () => {
   assert.equal(res.status, 401);
 });
 
-test("没有会话的请求返回 404", async () => {
+// 2026-11-18 起：未知/过期会话不再回 404，改由常驻兜底会话执行并回带新 id。
+// dsh-go 0.2.x 收到 404 不会重新 initialize，会永久卡死。
+test("没有会话的请求走兜底会话，并回带新 session id", async () => {
   const r = await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  assert.equal(r.status, 404);
+  assert.equal(r.status, 200);
+  assert.ok(r.headers.get("mcp-session-id"));
 });
 
 let sessionId;
@@ -88,9 +91,11 @@ test("ping 有响应", async () => {
   assert.deepEqual(r.json.result, {});
 });
 
-test("DELETE 结束会话，之后 404", async () => {
+test("DELETE 结束会话，旧 id 仍由兜底会话接管", async () => {
   const r = await rpc(null, { "mcp-session-id": sessionId }, "DELETE");
   assert.equal(r.status, 204);
   const after = await rpc({ jsonrpc: "2.0", id: 4, method: "tools/list" }, { "mcp-session-id": sessionId });
-  assert.equal(after.status, 404);
+  // 旧 id 已不在 sessions 里，但请求不会失败：兜底会话接手并回带新 id。
+  assert.equal(after.status, 200);
+  assert.ok(after.headers.get("mcp-session-id"));
 });

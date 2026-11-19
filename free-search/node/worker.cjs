@@ -48,6 +48,19 @@ function loadWeather() {
   return weatherPromise;
 }
 
+// 多 key 池 / 多引擎合并：与引擎模块一样按需动态 import（本文件是 CJS，两个库是 ESM）。
+let keyPoolPromise = null;
+function loadKeyPool() {
+  if (keyPoolPromise === null) keyPoolPromise = import("./lib/key_pool.js");
+  return keyPoolPromise;
+}
+
+let multiMergePromise = null;
+function loadMultiMerge() {
+  if (multiMergePromise === null) multiMergePromise = import("./lib/multi_merge.js");
+  return multiMergePromise;
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 
 // Mirrors store.js DEFAULTS from the PI port. main.js hands these over from
@@ -61,6 +74,13 @@ const DEFAULTS = {
   safeSearch: "off",
   bingMarket: "zh-CN",
   lang: "zh",
+  // 多引擎并行：配了 key 的引擎同时跑，结果去重合并。
+  // multiEngine=false 时退回旧的「第一个有结果的引擎就返回」。
+  multiEngine: true,
+  // 一次最多并行几个引擎（天花板，不是必须跑满）。
+  engineFanout: 3,
+  // 合并后的目标条数；不够就顺着链路再补跑几个引擎。
+  minSources: 6,
 };
 
 function settingsOf(raw) {
@@ -233,8 +253,10 @@ function keysOf() {
   return keys;
 }
 
-function keyOf(keys, engine) {
-  return typeof keys[engine] === "string" ? keys[engine] : "";
+/** 该引擎当前是否配了 key（只判存在性，不消耗轮转下标）。 */
+function hasKey(keys, engine) {
+  const raw = keys?.[engine];
+  return typeof raw === "string" && raw.trim() !== "";
 }
 
 /** Engines that can run right now: enabled, and no missing required key. */
@@ -252,9 +274,9 @@ function runnableChain(settings, keys, wanted) {
   return ordered.filter((engine) => {
     if (disabled.includes(engine)) return false;
     if (EXPLICIT_ONLY.includes(engine)) return false;
-    if (KEY_REQUIRED.includes(engine)) return Boolean(keyOf(keys, engine));
+    if (KEY_REQUIRED.includes(engine)) return hasKey(keys, engine);
     if (KEY_OPTIONAL.includes(engine) || KEYLESS.includes(engine)) return true;
-    return Boolean(keyOf(keys, engine));
+    return hasKey(keys, engine);
   });
 }
 
@@ -265,8 +287,9 @@ function runnableChain(settings, keys, wanted) {
  * `pt` is the parsed time range (a predicate upstream uses to filter results).
  */
 async function runEngine(engine, query, maxResults, options, signal, ctx) {
-  const { m, keys } = ctx;
-  const key = keyOf(keys, engine);
+  const { m } = ctx;
+  // 每次尝试由调用方指定具体 key（多 key 轮换）；没指定就现挑一把。
+  const key = options?.key !== undefined ? options.key : ctx.kp.pickKey(engine, ctx.keys?.[engine]);
   const timeRange = options?.timeRange;
   switch (engine) {
     case "bing":
@@ -382,15 +405,71 @@ function abortMessage(signal) {
  * Run the chain: the preferred engine first, then every other runnable engine.
  * Cooling engines are skipped; a failure sets the upstream cooldown policy.
  */
+// 跑一个引擎（含重试与 key 轮换）。成功返回 result；失败返回 null 并把原因记进 failures。
+async function runEngineWithRetry(current, query, limit, settings, timeRange, ctx, failures) {
+  const { m, kp } = ctx;
+  const keyCount = kp.countKeys(ctx.keys?.[current]);
+  for (let attempt = 0; attempt <= ENGINE_RETRY; attempt += 1) {
+    if (ctx.signal?.aborted) throw new Error(abortMessage(ctx.signal));
+    const key = kp.pickKey(current, ctx.keys?.[current]);
+    const tag = attempt === 0 ? current : `${current}#retry${attempt}`;
+    const scope = abortScope(ctx.signal);
+    try {
+      const result = await withTimeout(
+        runEngine(
+          current,
+          query,
+          limit,
+          {
+            timeRange,
+            safeSearch: settings.safeSearch,
+            bingMarket: settings.bingMarket,
+            lang: settings.lang,
+            key,
+          },
+          scope.signal,
+          ctx,
+        ),
+        ENGINE_TIMEOUT_MS,
+        tag,
+        scope,
+      );
+      if (result?.sources?.length) {
+        kp.markKeySuccess(current, key);
+        return result;
+      }
+      // 0 结果不是故障，重试没有意义
+      failures.push(`${current}: 0 results`);
+      m.applyFailureCooldown(current, "invalid-response", false);
+      return null;
+    } catch (error) {
+      if (ctx.signal?.aborted) throw new Error(abortMessage(ctx.signal));
+      const failure = m.classifyFailure(error);
+      if (key) kp.markKeyFailure(current, key, failure.class, failure.rateLimited);
+      // 多把 key 时，鉴权/额度失败只是这一把 key 的事：换一把再试一次
+      const keyRetryable = keyCount > 1 && (failure.class === "auth" || failure.class === "quota");
+      if (attempt < ENGINE_RETRY && (RETRYABLE_CLASSES.has(failure.class) || keyRetryable)) {
+        failures.push(`${current} [${failure.class}]: ${failure.message} → 重试`);
+        continue;
+      }
+      failures.push(`${current} [${failure.class}]: ${failure.message}`);
+      m.applyFailureCooldown(current, failure.class, failure.rateLimited);
+      return null;
+    } finally {
+      scope.done();
+    }
+  }
+  return null;
+}
+
 async function searchChain(query, params, ctx) {
-  const { m } = ctx;
+  const { m, kp, mm } = ctx;
   const settings = ctx.settings;
   const requested = String(params.engine ?? "").trim();
   const runnable = runnableChain(settings, ctx.keys);
 
   // 首选引擎：显式点名的优先，其次是设置里的 provider，最后回落到默认。
-  // provider 可能已被用户停用（设置页允许这么做），那就退回链路第一个可跑的，
-  // 不然会把一个被停用的引擎又强行塞到队首。
+  // provider 可能已被用户停用（设置页允许这么做），那就退回链路第一个可跑的。
   let preferred;
   if (requested && requested !== "auto") {
     preferred = requested;
@@ -406,69 +485,95 @@ async function searchChain(query, params, ctx) {
   // 显式点名的引擎即使不在可运行链路里也要试一次——用户既然点名了，
   // 就让真实的失败原因（缺 key、连不上）传回去，比静默换成别的引擎好。
   const chain = [preferred, ...runnable.filter((engine) => engine !== preferred)];
-
   const failures = [];
-  for (const current of chain) {
-    if (!m.ALL_ENGINES.includes(current)) {
-      failures.push(`${current}: unknown engine`);
-      continue;
-    }
-    // 请求已取消/超时：立刻停，别把剩下的引擎再跑一遍。
-    if (ctx.signal?.aborted) throw new Error(abortMessage(ctx.signal));
-    if (m.isCoolingDown(current)) {
-      failures.push(`${current}: cooling down`);
-      continue;
-    }
-    for (let attempt = 0; attempt <= ENGINE_RETRY; attempt += 1) {
+  const explicit = Boolean(requested && requested !== "auto");
+
+  // ① 显式点名：单引擎，保持旧语义。
+  if (explicit) {
+    for (const current of chain) {
+      if (!m.ALL_ENGINES.includes(current)) {
+        failures.push(`${current}: unknown engine`);
+        continue;
+      }
       if (ctx.signal?.aborted) throw new Error(abortMessage(ctx.signal));
-      const tag = attempt === 0 ? current : `${current}#retry${attempt}`;
-      const scope = abortScope(ctx.signal);
-      try {
-        const result = await withTimeout(
-          runEngine(
-            current,
-            query,
-            limit,
-            {
-              timeRange,
-              safeSearch: settings.safeSearch,
-              bingMarket: settings.bingMarket,
-              lang: settings.lang,
-            },
-            scope.signal,
-            ctx,
-          ),
-          ENGINE_TIMEOUT_MS,
-          tag,
-          scope,
-        );
-        if (result?.sources?.length) {
-          return { ...result, engineUsed: current, failures };
-        }
-        // 0 结果不是故障，重试没有意义，直接换下一个
-        failures.push(`${current}: 0 results`);
-        m.applyFailureCooldown(current, "invalid-response", false);
-        break;
-      } catch (error) {
-        if (ctx.signal?.aborted) throw new Error(abortMessage(ctx.signal));
-        const failure = m.classifyFailure(error);
-        // 只有瞬时故障值得重试；key 错、额度用完、被反爬挡住，重试只是白等
-        if (attempt < ENGINE_RETRY && RETRYABLE_CLASSES.has(failure.class)) {
-          failures.push(`${current} [${failure.class}]: ${failure.message} → 重试`);
-          continue;
-        }
-        failures.push(`${current} [${failure.class}]: ${failure.message}`);
-        m.applyFailureCooldown(current, failure.class, failure.rateLimited);
-        break;
-      } finally {
-        scope.done();
+      if (m.isCoolingDown(current)) {
+        failures.push(`${current}: cooling down`);
+        continue;
+      }
+      const result = await runEngineWithRetry(current, query, limit, settings, timeRange, ctx, failures);
+      if (result) {
+        return { ...result, engineUsed: current, engineUsedList: [current], merged: false, parallel: false, failures };
       }
     }
+    throw new Error(`所有搜索引擎都失败了：\n${failures.join("\n")}`);
   }
-  throw new Error(`所有搜索引擎都失败了：\n${failures.join("\n")}`);
-}
 
-// ── Tool implementations ───────────────────────────────────────────────────
+  // ② 默认：配了 key 的引擎并行跑，结果去重合并；不够目标条数再补跑。
+  const multi = settings.multiEngine !== false;
+  const fanout = Math.max(1, Math.min(Number(settings.engineFanout) || DEFAULTS.engineFanout, 6));
+  const minSources = Math.max(1, Number(settings.minSources) || DEFAULTS.minSources);
+  const usable = chain.filter((engine) => m.ALL_ENGINES.includes(engine) && !m.isCoolingDown(engine));
+  const keyed = usable.filter((engine) => hasKey(ctx.keys, engine));
+
+  const primary =
+    multi && keyed.length >= 2
+      ? keyed.slice(0, Math.min(fanout, keyed.length))
+      : usable.slice(0, 1);
+
+  if (primary.length === 0) {
+    throw new Error(`没有可用的搜索引擎：\n${failures.join("\n") || "链路为空或全部冷却"}`);
+  }
+
+  const settled = await Promise.all(
+    primary.map(async (engine) => ({
+      engine,
+      result: await runEngineWithRetry(engine, query, limit, settings, timeRange, ctx, failures),
+    })),
+  );
+  const successful = settled
+    .filter((item) => item.result?.sources?.length)
+    .map((item) => ({ engine: item.engine, sources: item.result.sources }));
+
+  // 并行全军覆没：顺着链路继续兜底（常见是免 key 的 ddg/bing 还能用）。
+  if (successful.length === 0) {
+    for (const current of usable) {
+      if (primary.includes(current)) continue;
+      const result = await runEngineWithRetry(current, query, limit, settings, timeRange, ctx, failures);
+      if (result?.sources?.length) {
+        return { ...result, engineUsed: current, engineUsedList: [current], merged: false, parallel: false, failures };
+      }
+    }
+    throw new Error(`所有搜索引擎都失败了：\n${failures.join("\n")}`);
+  }
+
+  let merged = mm.mergeEngineResults(successful, { limit, appliesFreshness: Boolean(timeRange) });
+
+  // 不够目标条数就补跑，最多再拉两个引擎；达标立刻停，不白烧额度。
+  if (multi && merged.length < minSources) {
+    const tried = new Set(primary);
+    const extras = usable
+      .filter((engine) => !tried.has(engine))
+      .slice(0, 2);
+    for (const engine of extras) {
+      const result = await runEngineWithRetry(engine, query, limit, settings, timeRange, ctx, failures);
+      if (!result?.sources?.length) continue;
+      successful.push({ engine, sources: result.sources });
+      merged = mm.mergeEngineResults(successful, { limit, appliesFreshness: Boolean(timeRange) });
+      if (merged.length >= minSources) break;
+    }
+  }
+
+  const enginesUsed = successful.map((item) => item.engine);
+  return {
+    sources: merged,
+    truncated: merged.length >= limit,
+    engineUsed: enginesUsed.length === 1 ? enginesUsed[0] : enginesUsed,
+    engineUsedList: enginesUsed,
+    merged: enginesUsed.length > 1,
+    parallel: primary.length > 1,
+    failures,
+  };
+}
 
 function renderSources(sources, wrap) {
   const lines = sources.map((item, index) => {
@@ -487,8 +592,15 @@ async function toolWebSearch(params, ctx) {
   if (!query) throw new Error("query is required");
   const result = await searchChain(query, params, ctx);
 
+  const enginesUsed = result.engineUsedList ?? (Array.isArray(result.engineUsed) ? result.engineUsed : [result.engineUsed]);
+  const engineLabel =
+    enginesUsed.length > 1
+      ? `${enginesUsed.join(" + ")}${result.parallel ? "（并行）" : ""}`
+      : String(enginesUsed[0] ?? "?");
+  const mergedNote = result.merged ? "，已去重合并" : "";
+
   let body =
-    `引擎: ${result.engineUsed} · ${result.sources.length} 条结果\n\n` +
+    `引擎: ${engineLabel} · ${result.sources.length} 条结果${mergedNote}\n\n` +
     renderSources(result.sources, m.wrapUntrustedBlock);
 
   // 走了回退链就把跳过原因带上——模型需要知道「为什么不是首选引擎」，
@@ -502,7 +614,14 @@ async function toolWebSearch(params, ctx) {
 
   return {
     content: body,
-    detail: { engine: result.engineUsed, query, sources: result.sources, failures: result.failures },
+    detail: {
+      engine: result.engineUsed,
+      engines: enginesUsed,
+      merged: Boolean(result.merged),
+      query,
+      sources: result.sources,
+      failures: result.failures,
+    },
   };
 }
 
@@ -713,16 +832,19 @@ readline
     // 设置页逐引擎管理 key 的三个方法。它们不碰宿主凭证库，只读写插件自己的
     // 数据目录（见 keysFile）。设置页没有 callId，这些操作也不需要凭证。
     if (request.method === "keys/list") {
+      const keyPool = await loadKeyPool();
       const stored = readStoredKeys();
-      const env = keysOf("");
+      const effectiveKeys = keysOf();
       const engines = {};
       for (const engine of ALL_ENGINE_IDS) {
-        const storedValue = stored[engine];
-        const effective = env[engine];
+        const effective = effectiveKeys[engine];
+        const stats = keyPool.keyStats(engine, effective);
         engines[engine] = {
-          // 尾 4 位指纹：够用户回忆填的是哪个 key，不够重建出值。
-          tail: typeof effective === "string" && effective.length >= 12 ? effective.slice(-4) : null,
-          source: storedValue ? "settings" : effective ? "env" : "none",
+          // 只回尾 4 位指纹和多 key 数量，绝不回完整值。
+          tail: stats.length ? stats[stats.length - 1].tail : null,
+          count: stats.length,
+          keys: stats,
+          source: stored[engine] ? "settings" : effective ? "env" : "none",
         };
       }
       reply({ jsonrpc: "2.0", id: request.id, result: { ok: true, engines } });
@@ -779,8 +901,11 @@ readline
     activeRequests.set(request.id, controller);
     try {
       const m = await loadEngine();
+      const [kp, mm] = await Promise.all([loadKeyPool(), loadMultiMerge()]);
       const ctx = {
         m,
+        kp,
+        mm,
         signal: controller.signal,
         settings: settingsOf(params.settings),
         keys: keysOf(),

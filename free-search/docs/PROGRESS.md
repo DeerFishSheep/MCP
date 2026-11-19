@@ -1,6 +1,6 @@
 # PROGRESS
 
-最后更新：2026-11-18 · 当前状态：已上线；过期会话不再报错（兜底接管） · 下一步：weather 的 open-meteo 出口连不通，待换源
+最后更新：2026-11-20 · 当前状态：已上线；本次加多 key 轮换 + 配 key 引擎并行合并（待部署） · 下一步：weather 的 open-meteo 出口连不通，待换源
 
 ## 线上环境
 
@@ -33,6 +33,15 @@
 - `test/http.test.mjs` 8 项：鉴权、会话、tools/list、通知 202、ping、DELETE
 - 实测：HTTP 侧 `weather` / `web_search` 均返回正常结果，与 stdio 版输出一致
 - 2026-11-18 过期/未知 `mcp-session-id` 不再回 404：改用常驻兜底会话执行并回带新 id。dsh-go 0.2.x 收到 404 不会重新 initialize，会永久卡死（现象：空闲 1h 后 tools/call 一直 `-32000 unknown or expired session`，重启引擎才恢复）
+
+## 2026-11-20 多 key / 多引擎并行
+
+- 新增 `node/lib/key_pool.js`：同一引擎多把 key（逗号/分号/换行分隔），按 key 独立冷却与轮转；`keys/list` 只回尾 4 位 + 数量
+- 新增 `node/lib/multi_merge.js`：并行结果按归一化 URL 去重、域名轮转排序，记录 `corroboration`（几个引擎同时给出）
+- `worker.cjs`：`searchChain` 拆成「单引擎显式点名」与「多引擎并行 + 不足补跑」两条；重试时换 key
+- 新环境变量：`FREE_SEARCH_MULTI_ENGINE` / `ENGINE_FANOUT` / `MIN_SOURCES` / `KEY_COOLDOWN_MS`
+- 单测 `test/key_pool.test.mjs`、`test/multi_merge.test.mjs`（10 项全过）；本地 HTTP 冒烟通过
+- 未部署到线上
 
 ## 待办
 

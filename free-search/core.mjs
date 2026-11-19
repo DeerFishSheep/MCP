@@ -205,6 +205,10 @@ function loadSettings() {
       .filter(Boolean);
   }
   if (env.FREE_SEARCH_LANG) settings.lang = env.FREE_SEARCH_LANG;
+  if (env.FREE_SEARCH_ENGINE_FANOUT) settings.engineFanout = Number(env.FREE_SEARCH_ENGINE_FANOUT);
+  if (env.FREE_SEARCH_MIN_SOURCES) settings.minSources = Number(env.FREE_SEARCH_MIN_SOURCES);
+  if (env.FREE_SEARCH_MULTI_ENGINE === "0") settings.multiEngine = false;
+  else if (env.FREE_SEARCH_MULTI_ENGINE === "1") settings.multiEngine = true;
   return settings;
 }
 
